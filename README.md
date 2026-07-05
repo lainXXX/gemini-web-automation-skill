@@ -6,7 +6,7 @@
 
 ## 关于
 
-你日常使用的模型（DeepSeek V4 Flash、豆包、GLM、Qwen、Kimi）速度快、成本低，但面对复杂任务时——深度头脑风暴、写技术方案、设计架构、制定详细 Plan——它们的表现远不如 **Gemini 2.5 Pro with extended thinking**。
+你日常使用的模型（DeepSeek V4 Flash、豆包、GLM、Qwen、Kimi）速度快、成本低，但面对复杂任务时——深度头脑风暴、写技术方案、设计架构、制定详细 Plan——它们的表现远不如 **Gemini 3.1 Pro with extended thinking**。
 
 这个项目就是用来弥补这个差距的。
 
@@ -81,7 +81,7 @@ python scripts/chat.py --dry-run "测试"
   2. 将 Gemini 的回复作为参考，继续完成工作
 ```
 
-默认使用 Gemini 2.5 Pro + extended thinking 处理高难度任务；使用 **3.5 Flash** 作为多模态辅助（为没有视觉能力的模型提供看图能力）。
+默认使用 Gemini 3.1 Pro + extended thinking 处理高难度任务；使用 **3.5 Flash** 作为多模态辅助（为没有视觉能力的模型提供看图能力）。
 
 ### JSON 响应格式
 

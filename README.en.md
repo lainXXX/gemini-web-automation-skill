@@ -6,7 +6,7 @@ A Python runtime for browser-automated [Gemini](https://gemini.google.com/app) a
 
 ## About
 
-Your everyday models (DeepSeek V4 Flash, Doubao, GLM, Qwen, Kimi) are fast and cheap — but when it comes to truly hard problems, they fall short. Deep brainstorming, technical design, architecture planning, detailed specification writing — these tasks demand **Gemini 2.5 Pro with extended thinking**.
+Your everyday models (DeepSeek V4 Flash, Doubao, GLM, Qwen, Kimi) are fast and cheap — but when it comes to truly hard problems, they fall short. Deep brainstorming, technical design, architecture planning, detailed specification writing — these tasks demand **Gemini 3.1 Pro with extended thinking**.
 
 This project bridges that gap.
 
@@ -81,7 +81,7 @@ Declare the skill in your SKILL.md or CLAUDE.md so your agent knows when to use 
   2. Use Gemini's response as reference to continue working
 ```
 
-Default configuration: **Gemini 2.5 Pro + extended thinking** for tough problems; **3.5 Flash** as a multimodal assistant (for models without vision capabilities).
+Default configuration: **Gemini 3.1 Pro + extended thinking** for tough problems; **3.5 Flash** as a multimodal assistant (for models without vision capabilities).
 
 ### JSON Response Format
 
