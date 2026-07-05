@@ -2,9 +2,22 @@
 
 [中文](README.md) | <https://github.com/lainXXX/gemini-web-automation-skill>
 
-A Python runtime for interacting with [Gemini](https://gemini.google.com/app) through browser automation — send prompts, upload images, switch models, and retrieve replies, all returned as structured JSON.
+A Python runtime for browser-automated [Gemini](https://gemini.google.com/app) access, designed for AI Agent integration.
 
-Built for AI Agent integration (Claude Code, etc.), also usable as a standalone CLI tool.
+## About
+
+Your everyday models (DeepSeek V4 Flash, Doubao, GLM, Qwen, Kimi) are fast and cheap — but when it comes to truly hard problems, they fall short. Deep brainstorming, technical design, architecture planning, detailed specification writing — these tasks demand **Gemini 2.5 Pro with extended thinking**.
+
+This project bridges that gap.
+
+It lets any AI Agent (Claude Code, etc.) call upon Gemini's strongest capabilities when the task is too hard for the daily driver. Keep using your cheap model for routine work; hand the tough problems to Gemini.
+
+## What It's For
+
+- **Brainstorming & Solution Design** — Let Gemini Pro's deep thinking decompose complex problems and produce high-quality solutions
+- **Writing Specs & Plans** — Technical proposals, PRDs, architecture documents — Gemini's extended thinking excels at structured output
+- **Multimodal Assistance** — Your model doesn't have vision? Let Gemini (default 3.5 Flash) analyze images, screenshots, and UI for you
+- **Any task that needs "real thinking"** — The kind of depth your daily model can't deliver
 
 ## Features
 
@@ -16,19 +29,12 @@ Built for AI Agent integration (Claude Code, etc.), also usable as a standalone 
 - **Health check** — Quick runtime status without starting a conversation
 - **Proxy support** — HTTP, HTTPS, SOCKS5
 
-## Requirements
-
-- Python 3.9+
-- Google Chrome, Chromium, or Microsoft Edge
-- A Google account with access to [Gemini](https://gemini.google.com)
-- (For users in China) A proxy that can reach Google services
-
 ## Quick Start
 
 ```bash
 # 1. Clone
 git clone https://github.com/lainXXX/gemini-web-automation-skill.git
-cd gemini-web-automation
+cd gemini-web-automation-skill
 
 # 2. Configure
 cp .env.example .env
@@ -63,6 +69,19 @@ python scripts/chat.py --headed "Hello"
 # Dry-run (test model switching only, no conversation)
 python scripts/chat.py --dry-run "test"
 ```
+
+### Agent Integration (Claude Code example)
+
+Declare the skill in your SKILL.md or CLAUDE.md so your agent knows when to use it:
+
+```yaml
+- Routine work: handled by my default model
+- Hard tasks (brainstorming, solution design, specs, plans):
+  1. Call gemini-web-automation-skill
+  2. Use Gemini's response as reference to continue working
+```
+
+Default configuration: **Gemini 2.5 Pro + extended thinking** for tough problems; **3.5 Flash** as a multimodal assistant (for models without vision capabilities).
 
 ### JSON Response Format
 

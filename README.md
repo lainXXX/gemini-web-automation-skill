@@ -2,9 +2,22 @@
 
 [English](README.en.md) | <https://github.com/lainXXX/gemini-web-automation-skill>
 
-通过浏览器自动化 [Gemini](https://gemini.google.com/app) 的 Python 运行时——发送 Prompt、上传图片、切换模型、获取回复，全部通过结构化 JSON 返回。
+通过浏览器自动化 [Gemini](https://gemini.google.com/app) 的 Python 运行时，专为 AI Agent 集成设计。
 
-专为 AI Agent（Claude Code 等）集成设计，也可作为独立 CLI 工具使用。
+## 关于
+
+你日常使用的模型（DeepSeek V4 Flash、豆包、GLM、Qwen、Kimi）速度快、成本低，但面对复杂任务时——深度头脑风暴、写技术方案、设计架构、制定详细 Plan——它们的表现远不如 **Gemini 2.5 Pro with extended thinking**。
+
+这个项目就是用来弥补这个差距的。
+
+它让任何 AI Agent（Claude Code 等）在遇到高难度任务时，能随时调取 Gemini 的最强能力，然后把结果带回你的工作流。你继续用你喜欢的便宜模型做日常杂活，遇到硬骨头再交给 Gemini。
+
+## 它能做什么
+
+- **头脑风暴 & 方案设计** — 让 Gemini Pro 的 deep thinking 帮你拆解复杂问题、产出高质量方案
+- **写 Spec / Plan** — 技术方案、PRD、架构文档，Gemini 的 extended thinking 更擅长结构化输出
+- **多模态辅助** — 你用的模型没有视觉能力？让 Gemini（默认 3.5 Flash）帮你看图、分析截图、识别界面
+- **任何需要"认真想想"的任务** — 日常模型给不了的那种深度思考
 
 ## 特性
 
@@ -16,19 +29,12 @@
 - **健康检查** — 快速查看运行状态，不发起对话
 - **代理支持** — HTTP、HTTPS、SOCKS5
 
-## 环境要求
-
-- Python 3.9+
-- Google Chrome、Chromium 或 Microsoft Edge
-- 可访问 [Gemini](https://gemini.google.com) 的 Google 账号
-- （中国用户）能访问 Google 服务的代理
-
 ## 快速开始
 
 ```bash
 # 1. 克隆
 git clone https://github.com/lainXXX/gemini-web-automation-skill.git
-cd gemini-web-automation
+cd gemini-web-automation-skill
 
 # 2. 配置
 cp .env.example .env
@@ -63,6 +69,19 @@ python scripts/chat.py --headed "你好"
 # 仅测试模型切换（不发送对话）
 python scripts/chat.py --dry-run "测试"
 ```
+
+### Agent 集成（以 Claude Code 为例）
+
+在 SKILL.md 或 CLAUDE.md 中声明本工具，Agent 即可在需要时自动调用：
+
+```yaml
+- 日常杂活：用我自己的模型处理
+- 遇到复杂任务（头脑风暴、方案设计、写 spec/plan）：
+  1. 调用 gemini-web-automation-skill
+  2. 将 Gemini 的回复作为参考，继续完成工作
+```
+
+默认使用 Gemini 2.5 Pro + extended thinking 处理高难度任务；使用 **3.5 Flash** 作为多模态辅助（为没有视觉能力的模型提供看图能力）。
 
 ### JSON 响应格式
 
