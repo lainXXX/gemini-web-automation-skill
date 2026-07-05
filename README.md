@@ -1,68 +1,70 @@
 # Gemini Web Automation
 
-A Python runtime that automates [Gemini](https://gemini.google.com/app) through the browser — send prompts, upload images, switch models, and collect replies via a structured JSON API.
+[English](README.en.md)
 
-Designed for integration with AI agents (Claude Code, etc.) but usable as a standalone CLI tool.
+通过浏览器自动化 [Gemini](https://gemini.google.com/app) 的 Python 运行时——发送 Prompt、上传图片、切换模型、获取回复，全部通过结构化 JSON 返回。
 
-## Features
+专为 AI Agent（Claude Code 等）集成设计，也可作为独立 CLI 工具使用。
 
-- **Session persistence** — login once, reuse the browser profile across runs
-- **Warm/Cold start** — connects to running Chrome via CDP when available, auto-launches otherwise
-- **Model management** — discover, switch, and verify models + thinking levels (standard/extended)
-- **Image attachment** — paste images into conversations
-- **Structured JSON output** — `ok`, `contract`, `reply`, `error.code`, `next_action`
-- **Health check** — quick runtime status without conversation
-- **Proxy support** — HTTP, HTTPS, SOCKS5
+## 特性
 
-## Prerequisites
+- **会话持久化** — 登录一次，后续重复使用浏览器 Profile
+- **温/冷启动** — 优先通过 CDP 连接已有 Chrome，必要时自动启动新实例
+- **模型管理** — 自动发现、切换、验证模型及思考等级（标准/扩展）
+- **图片附件** — 将图片粘贴到对话中
+- **结构化 JSON 输出** — `ok`、`contract`、`reply`、`error.code`、`next_action`
+- **健康检查** — 快速查看运行状态，不发起对话
+- **代理支持** — HTTP、HTTPS、SOCKS5
+
+## 环境要求
 
 - Python 3.9+
-- Google Chrome, Chromium, or Microsoft Edge
-- A Google account with access to [Gemini](https://gemini.google.com)
-- (China users) A proxy that can reach Google services
+- Google Chrome、Chromium 或 Microsoft Edge
+- 可访问 [Gemini](https://gemini.google.com) 的 Google 账号
+- （中国用户）能访问 Google 服务的代理
 
-## Quick Start
+## 快速开始
 
 ```bash
-# 1. Clone
+# 1. 克隆
 git clone https://github.com/YOUR_USERNAME/gemini-web-automation.git
 cd gemini-web-automation
 
-# 2. Configure
+# 2. 配置
 cp .env.example .env
-# Edit .env — set PROXY_SERVER if needed
+# 编辑 .env — 国内用户务必配置 PROXY_SERVER
 
-# 3. Install dependencies & login
+# 3. 安装依赖并登录
 python scripts/bootstrap.py
 
-# 4. Chat
-python scripts/chat.py "Hello, Gemini!"
+# 4. 开始对话
+python scripts/chat.py "你好，Gemini！"
 ```
 
-`bootstrap.py` opens Chrome, you log into Google manually, then you're ready.
+`bootstrap.py` 会启动 Chrome 并打开 Gemini 登录页，你手动登录后即可开始使用。
 
-## Usage
+## 使用方法
 
 ### CLI
 
 ```bash
-# Send a message
-python scripts/chat.py "Explain quantum computing"
+# 发送消息
+python scripts/chat.py "解释一下量子计算"
 
-# With image attachment
-python scripts/chat.py "What's in this image?" -a photo.jpg
+# 附带图片
+python scripts/chat.py "这张图里有什么？" -a photo.jpg
 
-# Health check
+# 健康检查
 python scripts/chat.py --health
 
-# Keep browser visible
-python scripts/chat.py --headed "Hello"
+# 保持浏览器窗口可见
+python scripts/chat.py --headed "你好"
 
-# Model dry-run (no message sent)
-python scripts/chat.py --dry-run "test"
+# 仅测试模型切换（不发送对话）
+python scripts/chat.py --dry-run "测试"
 ```
 
-### JSON Response Format
+### JSON 响应格式
 
 ```json
 {
@@ -74,11 +76,11 @@ python scripts/chat.py --dry-run "test"
     "actual": {"model": "Pro", "thinking": "extended"}
   },
   "ok": true,
-  "reply": "Hello! How can I help you today?"
+  "reply": "你好！今天有什么可以帮你的？"
 }
 ```
 
-On error:
+出错时：
 
 ```json
 {
@@ -88,57 +90,57 @@ On error:
 }
 ```
 
-| Error Code | Meaning |
+| 错误码 | 含义 |
 |---|---|
-| `LOGIN_REQUIRED` | Not logged in — run `bootstrap.py` |
-| `ENV_NOT_FOUND` | `.env` missing — copy from `.env.example` |
-| `PROXY_REQUIRED` | Cannot reach Gemini — check proxy |
-| `MODEL_MISMATCH` | Expected model not available |
-| `STREAM_TIMEOUT` | AI response timed out |
+| `LOGIN_REQUIRED` | 未登录 — 运行 `bootstrap.py` |
+| `ENV_NOT_FOUND` | `.env` 不存在 — 从 `.env.example` 复制 |
+| `PROXY_REQUIRED` | 无法访问 Gemini — 检查代理 |
+| `MODEL_MISMATCH` | 期望的模型不可用 |
+| `STREAM_TIMEOUT` | AI 回复超时 |
 
-## Configuration
+## 配置项
 
-See `.env.example` for all options:
+详见 `.env.example`：
 
-| Variable | Default | Description |
+| 变量 | 默认值 | 说明 |
 |---|---|---|
-| `CHROME_PATH` | auto-detect | Chrome executable path |
-| `USER_DATA_DIR` | `./userdata` | Browser profile for login persistence |
-| `REMOTE_DEBUGGING_PORT` | `9222` | CDP port |
-| `PROXY_SERVER` | — | Proxy for Google access (China users: required) |
-| `MODEL_NAME` | `Pro` | Default model family (Pro, Flash, Flash-Lite) |
-| `THINKING_LEVEL` | `extended` | Thinking mode (extended, standard) |
+| `CHROME_PATH` | 自动检测 | Chrome 可执行文件路径 |
+| `USER_DATA_DIR` | `./userdata` | 浏览器 Profile 目录，用于持久化登录态 |
+| `REMOTE_DEBUGGING_PORT` | `9222` | CDP 端口 |
+| `PROXY_SERVER` | — | Google 访问代理（国内用户必填） |
+| `MODEL_NAME` | `Pro` | 默认模型（Pro、Flash、Flash-Lite） |
+| `THINKING_LEVEL` | `extended` | 思考等级（extended、standard） |
 
-## How It Works
+## 工作原理
 
 ```
 chat.py
   │
-  ├── 1. Environment check (.env, network, proxy)
-  ├── 2. Connect to Chrome (CDP warm start → cold launch fallback)
-  ├── 3. Ensure Gemini page (reuse existing tab or create new)
-  ├── 4. Ensure model (switch to expected model/thinking level if needed)
-  ├── 5. Send prompt (+ images if attached)
-  └── 6. Stream reply (wait for stability → return JSON)
+  ├── 1. 环境检查 (.env、网络、代理)
+  ├── 2. 连接 Chrome（CDP 温启动 → 冷启动回退）
+  ├── 3. 确保 Gemini 页面（复用已有标签页或新建）
+  ├── 4. 确保模型（按需切换到期望模型/思考等级）
+  ├── 5. 发送 Prompt（可选附带图片）
+  └── 6. 流式接收回复（等待稳定 → 返回 JSON）
 ```
 
-The runtime reuses Chrome's user data directory, so login state persists across runs. Cold start (launching a new Chrome) only happens when no existing Chrome instance with the correct profile is found.
+Runtime 复用 Chrome 的用户数据目录，登录状态跨运行持续保存。冷启动（启动新 Chrome）仅在未找到正确 Profile 的已有 Chrome 实例时发生。
 
-## Project Structure
+## 项目结构
 
 ```
 ├── scripts/
-│   ├── chat.py          # Main runtime — the only entry point for daily use
-│   └── bootstrap.py     # One-time setup: login wizard
+│   ├── chat.py          # 主运行时 — 日常使用的唯一入口
+│   └── bootstrap.py     # 一次性设置：登录向导
 ├── references/
-│   ├── architecture.md  # Design decisions
-│   ├── gemini.md        # Page interaction selectors & patterns
-│   └── maintenance.md   # Troubleshooting & anti-patterns
-├── .env.example         # Configuration template
+│   ├── architecture.md  # 设计决策
+│   ├── gemini.md        # 页面交互选择器与模式
+│   └── maintenance.md   # 故障排查与反模式
+├── .env.example         # 配置模板
 ├── CHANGELOG.md
-└── SKILL.md             # Agent integration instructions
+└── SKILL.md             # Agent 集成说明
 ```
 
-## License
+## 许可
 
 MIT
