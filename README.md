@@ -1,6 +1,6 @@
 # Gemini Web Automation
 
-[English](README.en.md)
+[English](README.en.md) | <https://github.com/lainXXX/gemini-web-automation-skill>
 
 通过浏览器自动化 [Gemini](https://gemini.google.com/app) 的 Python 运行时——发送 Prompt、上传图片、切换模型、获取回复，全部通过结构化 JSON 返回。
 
@@ -27,7 +27,7 @@
 
 ```bash
 # 1. 克隆
-git clone https://github.com/YOUR_USERNAME/gemini-web-automation.git
+git clone https://github.com/lainXXX/gemini-web-automation-skill.git
 cd gemini-web-automation
 
 # 2. 配置

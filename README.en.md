@@ -1,6 +1,6 @@
 # Gemini Web Automation
 
-[中文](README.md)
+[中文](README.md) | <https://github.com/lainXXX/gemini-web-automation-skill>
 
 A Python runtime for interacting with [Gemini](https://gemini.google.com/app) through browser automation — send prompts, upload images, switch models, and retrieve replies, all returned as structured JSON.
 
@@ -27,7 +27,7 @@ Built for AI Agent integration (Claude Code, etc.), also usable as a standalone 
 
 ```bash
 # 1. Clone
-git clone https://github.com/YOUR_USERNAME/gemini-web-automation.git
+git clone https://github.com/lainXXX/gemini-web-automation-skill.git
 cd gemini-web-automation
 
 # 2. Configure
