@@ -94,59 +94,52 @@ Gemini 的菜单（模型选择、思考等级）使用 Angular CDK Overlay：
 ### 优先级
 
 ```
-ClipboardStrategy（优先）
-    │  图片 (PNG/JPEG/WebP/GIF)
-    │  非图片 → 自动降级
+Bulk ClipboardStrategy（优先）
+    │  单次 ClipboardEvent，所有文件一个 DataTransfer
+    │  避免多张 paste 的竞态问题
     ▼
-FileChooserStrategy（回退）
-    │  全部文件类型 (图片/PDF/Word/Excel)
-    │  无上传按钮 → 自动降级
-    ▼
-DOMStrategy（兜底）
-    │  隐藏 <input type="file"> 注入
-    │
-    全部失败 → AttachmentUploadError
+Individual ClipboardStrategy（兜底）
+    │  逐个 paste，间隔 1s
+    │  全部失败 → ATTACHMENT_FAILED
 ```
 
-### ClipboardStrategy 详细
+### Bulk ClipboardStrategy
 
-模拟真实用户的粘贴操作，用于图片上传：
+单次 ClipboardEvent 粘贴多张图片，避免连续 paste 的竞态问题：
 
 ```
-读取图片 → base64
+读取全部图片 → base64 数组
     ↓
 page.evaluate()
     ↓
-atob() → Uint8Array → Blob
+atob() → Uint8Array → Blob → File 数组
     ↓
-new File([blob], "image.png", {type: mime})
+一个 DataTransfer，items.add() 添加所有 File
     ↓
-DataTransfer.items.add(file)
-    ↓
-new ClipboardEvent('paste', {clipboardData: dt})
+单次 new ClipboardEvent('paste', {clipboardData: dt})
     ↓
 div.dispatchEvent(event)
     ↓
-Gemini 收到 Paste 事件，处理图片
+Gemini 认为一次粘贴了多张图片
 ```
 
 **为什么不用系统剪贴板：** CDP 下 `Control+V` keyboard 事件无法访问系统剪贴板（安全限制）。直接构造 ClipboardEvent 绕过此限制且更稳定。
 
 **注意：** 此事件是非 trusted 事件（`isTrusted=false`），Gemini 接受此模式，已验证可用。
 
-### FileChooserStrategy
+### 等待策略
 
 ```
-点击上传按钮 → 底部菜单"文件" → expect_file_chooser → set_files()
+_wait_images_ready(expected_count)
+    │  轮询输入框中 <img> + attachment 元素数量
+    │  直到 ≥ expected 或 15s 超时
+    │  避免单张 thumbnail 出现就误判全部完成
 ```
-
-适用于非图片文件（PDF、Word、Excel 等无法粘贴的文件类型）。
 
 ### 已知限制
 
 - 非 trusted 的 paste 事件可能被部分页面拒绝（Gemini 接受）
-- Gemini 首页（无对话）按 Enter 可能不包含附件预览 → 优先找发送按钮
-- 多附件粘贴需逐个粘贴，间隔 3-4s
+- 三种策略依次降级尝试，不跳过
 
 ## 回复检测（Streaming）
 

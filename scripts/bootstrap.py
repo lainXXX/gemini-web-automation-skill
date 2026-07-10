@@ -10,6 +10,7 @@ bootstrap.py — Cold Start 一次性初始化
 
 import os
 import sys
+import argparse
 import shutil
 import subprocess
 import urllib.request
@@ -148,6 +149,156 @@ def start_chrome_and_login():
     input("  完成后按 Enter 继续...")
 
 
+def start_chrome_daemon():
+    """在后台启动 Chrome（最小化），供 chat.py 消费 CDP。"""
+    print("启动 Chrome Daemon（后台最小化）...")
+
+    proxy = ""
+    if ENV_TARGET.exists():
+        for line in ENV_TARGET.read_text(encoding="utf-8").splitlines():
+            if line.startswith("PROXY_SERVER="):
+                proxy = line.split("=", 1)[1].strip()
+                break
+
+    chrome = _find_chrome()
+    if not chrome:
+        print("  ✗ 未找到 Chrome")
+        return False
+
+    import socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    cdp_available = sock.connect_ex(("127.0.0.1", 9222)) == 0
+    sock.close()
+    if cdp_available:
+        print("  ✓ Chrome 已在运行（端口 9222 已占用）")
+    else:
+        args = [
+            chrome,
+            f"--user-data-dir={USERDATA_DIR}",
+            "--remote-debugging-port=9222",
+            "--start-minimized",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-background-networking",
+            "--disable-sync",
+        ]
+        if proxy:
+            args.append(f"--proxy-server={proxy}")
+
+        subprocess.Popen(args, shell=(sys.platform == "win32"))
+        print("  ✓ Chrome 已启动（最小化后台）")
+        # 给 Chrome 一点时间打开 CDP
+        import time
+        for _ in range(20):
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            ready = sock.connect_ex(("127.0.0.1", 9222)) == 0
+            sock.close()
+            if ready:
+                break
+            time.sleep(0.5)
+
+    # 检测登录状态并将窗口最小化
+    import asyncio
+    try:
+        state = asyncio.run(_check_login_state())
+        _print_login_status(state)
+        if state == "CHAT":
+            asyncio.run(_minimize_window())
+    except Exception as e:
+        print(f"  ! 登录状态检测失败: {e}")
+    return True
+
+
+async def _check_login_state() -> str:
+    """通过 CDP 检测 Gemini 页面登录状态。返回 CHAT | LOGIN | UNAVAILABLE。"""
+    from playwright.async_api import async_playwright
+
+    TARGET_URL = "https://gemini.google.com/app"
+    p = await async_playwright().start()
+    try:
+        browser = await p.chromium.connect_over_cdp("http://127.0.0.1:9222")
+
+        # 找 Gemini 页面，没有就导航一个已有页面
+        page = None
+        for ctx in browser.contexts:
+            for pg in ctx.pages:
+                if "gemini.google.com" in pg.url:
+                    page = pg
+                    break
+            if page:
+                break
+
+        if not page:
+            for ctx in browser.contexts:
+                for pg in ctx.pages:
+                    page = pg
+                    break
+                if page:
+                    break
+
+        if not page:
+            return "UNAVAILABLE"
+
+        if "gemini.google.com" not in page.url:
+            await page.goto(TARGET_URL, timeout=30000, wait_until="domcontentloaded")
+            await page.wait_for_timeout(3000)
+
+        state = await page.evaluate("""() => {
+            const login = document.querySelector('a[href*="signin"], a[href*="login"], a[aria-label*="登录"], a[aria-label*="Sign in"]');
+            const profile = document.querySelector('[data-test-id="accounts-profile-button"], button[aria-label*="Google Account"], button[aria-label*="账号"]');
+            const textarea = document.querySelector('div[contenteditable="true"][role="textbox"]');
+            if (profile) return "CHAT";
+            if (textarea && !login) return "CHAT";
+            if (login) return "LOGIN";
+            if (textarea) return "CHAT";
+            return "UNKNOWN";
+        }""")
+        return state
+    finally:
+        await p.stop()
+
+
+async def _minimize_window():
+    """通过 CDP 最小化 Chrome 窗口。"""
+    from playwright.async_api import async_playwright
+    try:
+        p = await async_playwright().start()
+        browser = await p.chromium.connect_over_cdp("http://127.0.0.1:9222")
+        for ctx in browser.contexts:
+            for pg in ctx.pages:
+                try:
+                    cdp = await pg.context.new_cdp_session(pg)
+                    win = await cdp.send("Browser.getWindowForTarget")
+                    await cdp.send("Browser.setWindowBounds", {
+                        "windowId": win["windowId"],
+                        "bounds": {"windowState": "minimized"},
+                    })
+                    break
+                except Exception:
+                    pass
+            break
+        await p.stop()
+    except Exception:
+        pass
+
+
+def _print_login_status(state: str):
+    if state == "CHAT":
+        print()
+        print("  ✅ 登录状态：已登录")
+        print("  → 可以直接使用 chat.py")
+    elif state == "LOGIN":
+        print()
+        print("  ⚠️  登录状态：未登录")
+        print("  → 运行 python scripts/bootstrap.py --login 打开浏览器手动登录")
+    elif state == "UNKNOWN":
+        print()
+        print("  ? 登录状态：无法确认（页面可能未完全加载）")
+    else:
+        print()
+        print("  ! 无法访问 Gemini 页面（浏览器可能没有打开标签页）")
+
+
 def verify_login():
     """UserData 持久化，无需验证。"""
     print("[5/5] 保存配置...")
@@ -161,18 +312,26 @@ def verify_login():
 
 
 def main():
-    print("=" * 50)
-    print("  AI Chat Automation — Cold Start")
-    print("=" * 50)
-    print()
+    parser = argparse.ArgumentParser(description="Gemini Chrome Bootstrapper")
+    parser.add_argument("--login", action="store_true",
+                        help="打开浏览器窗口供手动登录（首次使用）")
+    args = parser.parse_args()
 
-    if not check_environment():
-        sys.exit(1)
-
-    install_dependencies()
-    setup_env()
-    start_chrome_and_login()
-    verify_login()
+    if args.login:
+        # Headed 登录流程
+        if not check_environment():
+            sys.exit(1)
+        install_dependencies()
+        setup_env()
+        start_chrome_and_login()
+        verify_login()
+        # 登录完成，最小化窗口到后台
+        import asyncio
+        asyncio.run(_minimize_window())
+        print("  ✓ 窗口已最小化到后台")
+    else:
+        # 默认：后台启动 Chrome，检测登录状态
+        start_chrome_daemon()
 
 
 if __name__ == "__main__":

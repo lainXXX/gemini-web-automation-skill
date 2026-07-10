@@ -18,10 +18,10 @@ CDP :9222 可用？
     ├── YES → connectOverCDP()
     │           │
     │           ▼
-    │     复用已有 Page/Tab？
-    │      ├── 是 Gemini 页 → 直接使用
+    │     复用已有 Gemini Page？
+    │      ├── 有 Gemini 页 → 直接复用
     │      ├── 有其他 Page → 导航到 Gemini
-    │      └── 没有 Page → new_page + goto
+    │      └── 没有 Page → NO_PAGES 错误
     │           │
     │           ▼
     │     classify() 判断页面状态
@@ -30,16 +30,17 @@ CDP :9222 可用？
     │      ├── CAPTCHA → 暂停等待人工
     │      └── UNKNOWN → 收集证据 → abort
     │
-    └── NO → _launch_chrome() 等待 :9222
+    └── NO → CHROME_NOT_RUNNING 错误（运行 bootstrap --daemon）
 ```
 
 ## 模块职责（设计知识）
 
 ### Browser 生命周期
-- 单 Chrome 进程 + CDP 暴露，多 Agent 共享
+- bootstrap.py 是 Chrome Daemon，负责启动/管理 Chrome 进程
+- chat.py 只通过 CDP 消费浏览器，不管理 Chrome 生命周期
 - Warm Start: 仅 connectOverCDP()，不重启 Chrome
-- Cold Start: 启动 Chrome（headed），供手动登录
-- Self Healing: CDP 断连 → 自动重启 Chrome 并重连
+- Cold Start: bootstrap.py 启动 Chrome（headed），供手动登录
+- Daemon 模式: bootstrap.py --daemon 在后台最小化启动 Chrome
 - Proxy: 从 .env 读取，支持 http/https/socks5
 
 ### Session 复用

@@ -10,7 +10,7 @@ Agent 仅根据 ok、contract、reply、error.code、next_action 决定下一步
     python scripts/chat.py --health
 """
 
-import os, sys, json, base64, asyncio, argparse, time, socket, subprocess, uuid
+import os, sys, json, base64, asyncio, argparse, time, socket, uuid
 from pathlib import Path
 from urllib.parse import urlparse
 from dotenv import load_dotenv
@@ -47,6 +47,9 @@ EXPECTED_THINKING = os.getenv("THINKING_LEVEL")
 INPUT_SEL = 'div[contenteditable="true"][role="textbox"]'
 SEND_SEL = 'button[aria-label="Send message"], button[aria-label="发送消息"]'
 MODEL_SEL = 'button[aria-label*="模式选择器"]'
+PROFILE_SEL = '[data-test-id="accounts-profile-button"], button[aria-label*="Google Account"], button[aria-label*="账号"]'
+LOGIN_BTN_SEL = 'a[href*="signin"], a[href*="login"], a[aria-label*="登录"], a[aria-label*="Sign in"]'
+HISTORY_SEL = 'message-content, nav[aria-label*="历史"], nav[aria-label*="History"]'
 MIME_MAP = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
             '.webp': 'image/webp', '.gif': 'image/gif'}
 
@@ -69,8 +72,10 @@ ERROR_MESSAGES = {
     "MODEL_MISMATCH":      "模型不匹配，未能切换到期望模型",
     "CHROME_NOT_FOUND":    "Chrome 未找到，请检查 CHROME_PATH",
     "CHROME_START_FAILED": "Chrome 启动失败 (20s 超时)",
+    "CHROME_NOT_RUNNING":  "Chrome 未运行，请先运行 bootstrap.py",
     "CDP_CONNECT_FAILED":  "CDP 连接失败",
     "PAGE_NOT_FOUND":      "无法导航到 Gemini 页面",
+    "NO_PAGES":            "浏览器中没有页面，请先运行 bootstrap.py",
     "LOGIN_REQUIRED":      "Gemini 未登录，请运行 bootstrap.py",
     "INPUT_NOT_FOUND":     "输入框未就绪 (10s 超时)",
     "STREAM_TIMEOUT":      "AI 回复超时",
@@ -80,14 +85,18 @@ ERROR_MESSAGES = {
     "INVALID_ENV":         ".env 配置有误，请检查",
     "PROXY_REQUIRED":      "无法连接到 gemini.google.com，请检查 PROXY_SERVER 或系统代理",
     "UNKNOWN":             "未知错误",
+    "UNKNOWN_PAGE":        "无法识别页面状态，请检查 Gemini 页面",
 }
 NEXT_ACTIONS = {
-    "ENV_NOT_FOUND":   "CREATE_ENV",
-    "LOGIN_REQUIRED":  "RUN_BOOTSTRAP",
-    "PROXY_REQUIRED":  "CHECK_PROXY",
-    "NETWORK_ERROR":   "CHECK_PROXY",
-    "INVALID_ENV":     "FIX_ENV",
-    "MODEL_MISMATCH":  "SWITCH_MODEL",
+    "ENV_NOT_FOUND":     "CREATE_ENV",
+    "LOGIN_REQUIRED":    "RUN_BOOTSTRAP",
+    "CHROME_NOT_RUNNING":"RUN_BOOTSTRAP",
+    "CDP_CONNECT_FAILED":"RUN_BOOTSTRAP",
+    "NO_PAGES":          "RUN_BOOTSTRAP",
+    "PROXY_REQUIRED":    "CHECK_PROXY",
+    "NETWORK_ERROR":     "CHECK_PROXY",
+    "INVALID_ENV":       "FIX_ENV",
+    "MODEL_MISMATCH":    "SWITCH_MODEL",
 }
 
 
@@ -172,7 +181,6 @@ class ChatRuntime:
 
     STATE_IDLE = "IDLE"
     STATE_READY = "READY"
-    STATE_COLD_STARTED = "COLD_STARTED"
     STATE_RECONNECTED = "RECONNECTED"
     STATE_LOGIN_REQUIRED = "LOGIN_REQUIRED"
     STATE_FAILED = "FAILED"
@@ -182,11 +190,10 @@ class ChatRuntime:
         self._browser = None
         self._page = None
         self._headed = headed
-        self._chrome_proc = None
         self._startup = "warm"
         self._state = self.STATE_IDLE
         self._browser_version = "unknown"
-        self._page_mode = "reused"
+        self._page_mode = "unknown"
         self._initial_mr_count = 0
 
     # ── properties ──────────────────────────────────────────────
@@ -195,12 +202,12 @@ class ChatRuntime:
     def info(self) -> dict:
         return {
             "startup": self._startup,
-            "browser": "reused" if self._startup == "warm" else "started",
+            "browser": "reused",
             "session": "reused",
             "page": self._page_mode,
             "browser_version": self._browser_version,
             "runtime_state": self._state,
-            "health": "healthy" if self._state in (self.STATE_READY, self.STATE_RECONNECTED, self.STATE_COLD_STARTED) else self._state.lower(),
+            "health": "healthy" if self._state in (self.STATE_READY, self.STATE_RECONNECTED) else self._state.lower(),
         }
 
     @property
@@ -214,113 +221,103 @@ class ChatRuntime:
     # ── connect ──────────────────────────────────────────────────
 
     async def connect(self) -> dict | None:
-        """Connect to CDP or launch Chrome. Returns error dict or None."""
+        """Connect to CDP. Returns error dict or None.
+        Does NOT manage Chrome lifecycle — bootstrap.py is responsible for Chrome."""
         from playwright.async_api import async_playwright
         self._p = await async_playwright().start()
 
-        if _cdp_available():
-            try:
-                self._browser = await self._p.chromium.connect_over_cdp(
-                    f"http://127.0.0.1:{CDP_PORT}")
-                # 验证连上的 Chrome 确实是我们的 userdata
-                if await self._verify_userdata():
-                    self._state = self.STATE_RECONNECTED
-                    self._browser_version = self._browser.version
-                    return None
-                # 不是我们的 Chrome，断开连接，走冷启动
-                await self._browser.close()
-                self._browser = None
-            except Exception:
-                pass
+        if not _cdp_available():
+            return self._result_error("CHROME_NOT_RUNNING", "RUN_BOOTSTRAP")
 
-        # Cold start
-        self._startup = "cold"
-        err = self._launch_chrome()
-        if err:
-            return err
-        await asyncio.sleep(2)
         try:
             self._browser = await self._p.chromium.connect_over_cdp(
                 f"http://127.0.0.1:{CDP_PORT}")
-            self._state = self.STATE_COLD_STARTED
+            self._state = self.STATE_RECONNECTED
             self._browser_version = self._browser.version
             return None
         except Exception:
-            return self._result_error("CDP_CONNECT_FAILED")
-
-    async def _verify_userdata(self) -> bool:
-        """通过 chrome://version/ 验证连上的 Chrome 是否使用我们的 userdata。"""
-        try:
-            page = await self._browser.new_page()
-            await page.goto("chrome://version/", timeout=5000)
-            profile = await page.evaluate("""() => {
-                const rows = document.querySelectorAll('tr');
-                for (const r of rows) {
-                    const cells = r.querySelectorAll('td');
-                    for (let i = 0; i < cells.length; i++) {
-                        if (/profile\\s*path/i.test(cells[i].textContent)) {
-                            return cells[i + 1]?.textContent || '';
-                        }
-                    }
-                }
-                return '';
-            }""")
-            await page.close()
-            return USER_DATA_DIR in profile.replace('\\', '/')
-        except Exception:
-            return False
-
-    def _launch_chrome(self) -> dict | None:
-        if not os.path.isfile(CHROME_PATH):
-            return self._result_error("CHROME_NOT_FOUND")
-        args = [CHROME_PATH, f"--remote-debugging-port={CDP_PORT}",
-                f"--user-data-dir={USER_DATA_DIR}",
-                "--disable-background-networking", "--disable-sync",
-                "--disable-popup-blocking", "--disable-default-apps",
-                "--disable-dev-shm-usage", "--no-first-run", "--no-default-browser-check"]
-        if PROXY_SERVER:
-            args.append(f"--proxy-server={PROXY_SERVER}")
-        self._chrome_proc = subprocess.Popen(args, stdout=subprocess.DEVNULL,
-                                              stderr=subprocess.DEVNULL)
-        for _ in range(40):
-            if _cdp_available():
-                return None
-            time.sleep(0.5)
-        return self._result_error("CHROME_START_FAILED")
+            return self._result_error("CDP_CONNECT_FAILED", "RUN_BOOTSTRAP")
 
     # ── ensure_chat ──────────────────────────────────────────────
 
-    async def ensure_chat(self) -> tuple[dict, dict | None]:
-        """Find or create Gemini page, classify state.
-        Returns (page_state, error).  When error is None, self._page is usable.
-        """
-        page = None
+    async def _find_gemini_page(self):
+        """Score-based page finder. Returns best matching Gemini page or None."""
+        candidates = []
         for ctx in self._browser.contexts:
             for pg in ctx.pages:
-                if TARGET_URL in pg.url:
-                    page = pg
-                    break
-            if page:
-                break
+                url = pg.url
+                score = 0
+                if "gemini.google.com" in url:
+                    score += 50
+                try:
+                    if await pg.locator(INPUT_SEL).count() > 0:
+                        score += 30
+                    if await pg.locator(MODEL_SEL).count() > 0:
+                        score += 20
+                except Exception:
+                    pass
+                if score > 0:
+                    candidates.append((score, pg))
+        if candidates:
+            return max(candidates, key=lambda x: x[0])[1]
+        return None
+
+    async def ensure_chat(self) -> tuple[dict, dict | None]:
+        """Find Gemini page or navigate existing page to Gemini.
+        Never creates new pages/tabs — bootstrap.py manages Chrome lifecycle.
+        Returns (page_state, error).  When error is None, self._page is usable.
+        """
+        page = await self._find_gemini_page()
 
         if page:
             self._page = page
             self._page_mode = "reused"
         else:
-            try:
-                self._page = await self._browser.new_page()
-                await self._page.goto(TARGET_URL, timeout=20000)
-                await asyncio.sleep(3)
-                self._page_mode = "created"
-            except Exception:
-                return {}, self._result_error("PAGE_NOT_FOUND")
+            # No Gemini page found — navigate first existing page to Gemini
+            existing = None
+            for ctx in self._browser.contexts:
+                for pg in ctx.pages:
+                    existing = pg
+                    break
+                if existing:
+                    break
+
+            if existing:
+                self._page = existing
+                self._page_mode = "navigated"
+                try:
+                    await self._page.goto(TARGET_URL, timeout=60000,
+                                          wait_until="domcontentloaded")
+                    await asyncio.sleep(3)
+                except Exception:
+                    return {}, self._result_error("PAGE_NOT_FOUND")
+            else:
+                # No pages at all — Chrome is running but has no tabs
+                return {}, self._result_error("NO_PAGES", "RUN_BOOTSTRAP")
 
         await self._page.bring_to_front()
         ps = await self._classify()
 
+        if ps["state"] == "CAPTCHA":
+            self._state = self.STATE_LOGIN_REQUIRED
+            return ps, self._result_error("LOGIN_REQUIRED", "RUN_BOOTSTRAP")
+
+        # 瞬态保护：LOGIN/UNKNOWN 可能是页面加载中 — reload 一次确认
+        if ps["state"] in ("LOGIN", "UNKNOWN"):
+            try:
+                await self._page.reload(timeout=15000)
+                await asyncio.sleep(4)
+                ps = await self._classify()
+            except Exception:
+                pass
+
         if ps["state"] in ("LOGIN", "CAPTCHA"):
             self._state = self.STATE_LOGIN_REQUIRED
             return ps, self._result_error("LOGIN_REQUIRED", "RUN_BOOTSTRAP")
+
+        if ps["state"] == "UNKNOWN":
+            # 二次 reload 仍 UNKNOWN — 收集证据返回 UNKNOWN_PAGE
+            return ps, self._result_error("UNKNOWN_PAGE", "RUN_BOOTSTRAP")
 
         self._state = self.STATE_READY
         if not self._headed:
@@ -339,7 +336,37 @@ class ChatRuntime:
         except Exception:
             pass
 
+    async def _collect_features(self) -> dict:
+        """Use Playwright locators to detect page features.
+
+        Rules:
+        - login_button: DOM presence is enough (hidden sign-in = not logged in)
+        - profile/textarea/model_switcher: must be visible (only meaningful when rendered)
+        - history: DOM presence is enough (cached from prior session)
+        """
+        features = {"profile": False, "textarea": False,
+                     "model_switcher": False, "login_button": False,
+                     "history": False}
+        # login_button/history: count() > 0 (DOM presence)
+        for name, sel in [("login_button", LOGIN_BTN_SEL), ("history", HISTORY_SEL)]:
+            try:
+                features[name] = await self._page.locator(sel).count() > 0
+            except Exception:
+                pass
+        # profile/textarea/model_switcher: is_visible() (must be rendered)
+        for name, sel in [("profile", PROFILE_SEL), ("textarea", INPUT_SEL),
+                          ("model_switcher", MODEL_SEL)]:
+            try:
+                features[name] = await self._page.locator(sel).first.is_visible()
+            except Exception:
+                pass
+        return features
+
     async def _classify(self) -> dict:
+        """Deterministic page state classification. No scoring/probability.
+
+        Returns CHAT | LOGIN | CAPTCHA | UNKNOWN with feature map for debugging.
+        """
         url = self._page.url
         title = await self._page.title()
         in_captcha = await self._page.evaluate(
@@ -347,39 +374,26 @@ class ChatRuntime:
         if in_captcha:
             return {"state": "CAPTCHA", "url": url, "title": title}
 
-        # Layer 1: URL fast filter — Google SSO 页面绝对未登录
+        # URL fast path: Google SSO page
         if "accounts.google.com" in url or "/signin" in url.lower():
             return {"state": "LOGIN", "url": url, "title": title}
 
-        # Layer 2: Feature mutual exclusion
-        features = await self._page.evaluate("""() => {
-            const body = document.body;
-            return {
-                login_btn:  !!body.querySelector('a[href*="signin"], a[href*="login"], a[aria-label*="登录"], a[aria-label*="Sign in"]'),
-                sidebar:    !!body.querySelector('nav[aria-label*="历史"], nav[aria-label*="History"], [data-test-id*="sidebar"], [data-test-id*="nav"]'),
-                avatar:     !!body.querySelector('img[alt*="avatar"], img[alt*="profile"], button[aria-label*="account"], button[aria-label*="账号"], a[aria-label*="账号"], img.mavatar-image'),
-                input:      !!body.querySelector('div[contenteditable="true"][role="textbox"]'),
-                messages:   document.querySelectorAll('message-content').length > 0,
-                model_btn:  !!body.querySelector('button[aria-label*="模式选择器"]'),
-                model_btn_text: (() => {
-                    const btn = document.querySelector('button[aria-label*="模式选择器"]');
-                    return btn ? btn.innerText : '';
-                })(),
-            };
-        }""")
+        features = await self._collect_features()
 
-        # 优先级：avatar > login_btn。avatar 是登录的确定性证据，
-        # login_btn 在冷启动时可能短暂出现（页面未完全渲染），
-        # 优先检查 avatar 可避免瞬态误判。
-        pro_available = "Pro" in features["model_btn_text"] and "登录" not in features["model_btn_text"]
-
-        if features["avatar"] or features["messages"]:
+        # Deterministic priority order (each rule individually sufficient)
+        if features["profile"]:
             return {"state": "CHAT", "url": url, "title": title, "features": features}
 
-        if features["login_btn"]:
+        if features["textarea"] and not features["login_button"]:
+            return {"state": "CHAT", "url": url, "title": title, "features": features}
+
+        if features["model_switcher"] and not features["login_button"]:
+            return {"state": "CHAT", "url": url, "title": title, "features": features}
+
+        if features["login_button"]:
             return {"state": "LOGIN", "url": url, "title": title, "features": features}
 
-        if pro_available:
+        if features["history"] and not features["login_button"]:
             return {"state": "CHAT", "url": url, "title": title, "features": features}
 
         return {"state": "UNKNOWN", "url": url, "title": title, "features": features}
@@ -615,21 +629,11 @@ class ChatRuntime:
 
         await self._page.locator(INPUT_SEL).click()
         await asyncio.sleep(0.3)
-        attach_count = 0
 
         if attachments:
-            for fp in attachments:
-                if not os.path.isfile(fp):
-                    continue
-                ext = Path(fp).suffix.lower()
-                if ext in MIME_MAP:
-                    try:
-                        await self._paste_image(fp)
-                        attach_count += 1
-                    except Exception:
-                        return self._result_error("ATTACHMENT_FAILED")
-
-            await self._wait_image_ready()
+            ok = await self._upload_images(attachments)
+            if not ok:
+                return self._result_error("ATTACHMENT_FAILED")
 
         if attachments:
             await self._page.evaluate("""(text) => {
@@ -656,26 +660,57 @@ class ChatRuntime:
 
         return None
 
-    async def _wait_image_ready(self):
-        """Wait for image thumbnail to appear in input. 10s timeout, never blocks."""
+    async def _upload_images(self, paths: list[str]) -> bool:
+        """Upload images via best available strategy. Returns True on success."""
+        existing = [p for p in paths if os.path.isfile(p)]
+        if not existing:
+            return False
+
+        # Strategy 1: 单次 ClipboardEvent 批量粘贴多张（避免逐张 paste 竞态）
+        if await self._bulk_paste_images(existing):
+            await self._wait_images_ready(len(existing))
+            return True
+
+        # Strategy 2: 逐个 paste 兜底
+        for fp in existing:
+            try:
+                await self._paste_image(fp)
+            except Exception:
+                return False
+        await self._wait_images_ready(len(existing))
+        return True
+
+    async def _bulk_paste_images(self, paths: list[str]) -> bool:
+        """上传策略 2: 单次 ClipboardEvent，所有文件在一个 DataTransfer 中。"""
+        files = []
+        for fp in paths:
+            with open(fp, 'rb') as f:
+                b64 = base64.b64encode(f.read()).decode('ascii')
+            ext = Path(fp).suffix.lower()
+            mime = MIME_MAP.get(ext, 'image/png')
+            files.append({'b64': b64, 'mime': mime, 'name': Path(fp).name})
         try:
-            deadline = time.time() + 10
-            while time.time() < deadline:
-                ready = await self._page.evaluate("""() => {
-                    const div = document.querySelector('div[contenteditable="true"][role="textbox"]');
-                    if (!div) return false;
-                    const imgs = div.querySelectorAll('img');
-                    if (imgs.length > 0) return true;
-                    const chips = div.querySelectorAll('[data-test-id*="image"], [class*="image"], [class*="attachment"]');
-                    return chips.length > 0;
-                }""")
-                if ready:
-                    return
-                await asyncio.sleep(0.3)
+            await self._page.evaluate("""(files) => {
+                const div = document.querySelector('div[contenteditable="true"][role="textbox"]');
+                if (!div) return; div.focus();
+                const dt = new DataTransfer();
+                for (const f of files) {
+                    const bs = atob(f.b64);
+                    const bytes = new Uint8Array(bs.length);
+                    for (let i = 0; i < bs.length; i++) bytes[i] = bs.charCodeAt(i);
+                    const blob = new Blob([bytes], { type: f.mime });
+                    dt.items.add(new File([blob], f.name, { type: f.mime }));
+                }
+                div.dispatchEvent(new ClipboardEvent('paste',
+                    {clipboardData: dt, bubbles: true, cancelable: true}));
+            }""", files)
+            await asyncio.sleep(2)
+            return True
         except Exception:
-            pass
+            return False
 
     async def _paste_image(self, path: str):
+        """上传策略 3: 单张 paste 兜底。"""
         with open(path, 'rb') as f:
             b64 = base64.b64encode(f.read()).decode('ascii')
         ext = Path(path).suffix.lower()
@@ -692,6 +727,24 @@ class ChatRuntime:
                 {clipboardData: dt, bubbles: true, cancelable: true}));
         }""", {'b64': b64, 'mime': mime})
         await asyncio.sleep(1)
+
+    async def _wait_images_ready(self, expected: int):
+        """Wait for expected number of image thumbnails in input. 15s timeout."""
+        try:
+            deadline = time.time() + 15
+            while time.time() < deadline:
+                ready = await self._page.evaluate("""(exp) => {
+                    const div = document.querySelector('div[contenteditable="true"][role="textbox"]');
+                    if (!div) return false;
+                    const imgs = div.querySelectorAll('img');
+                    const chips = div.querySelectorAll('[data-test-id*="image"], [class*="image"], [class*="attachment"]');
+                    return (imgs.length + chips.length) >= exp;
+                }""", expected)
+                if ready:
+                    return
+                await asyncio.sleep(0.3)
+        except Exception:
+            pass
 
     # ── collect_reply ────────────────────────────────────────────
 
@@ -828,13 +881,12 @@ async def execute(prompt: str, attachments: list[str] | None = None,
     runtime = ChatRuntime(headed=headed)
     err = await runtime.connect()
     if err:
-        return _full_error(err["code"], request_id=request_id)
+        return _with_diag(err, runtime.info)
 
     # Stage 3: Ensure Chat Page
     page_state, err = await runtime.ensure_chat()
     if err:
-        return _full_error(err["code"], request_id=request_id,
-                           next_action=err.get("next_action"))
+        return _with_diag(err, runtime.info)
 
     # Stage 4: Ensure Model
     if attachments:
@@ -850,24 +902,26 @@ async def execute(prompt: str, attachments: list[str] | None = None,
 
     if dry_run:
         await runtime.close()
-        return _build_result(request_id, model_info,
-                             expected_model=expected_model,
-                             expected_thinking=expected_thinking)
+        result = _build_result(request_id, model_info,
+                               expected_model=expected_model,
+                               expected_thinking=expected_thinking)
+        return _with_diag(result, runtime.info)
 
     # Stage 5: Send Prompt
     err = await runtime.send(prompt, attachments)
     if err:
-        return _full_error(err["code"], request_id=request_id)
+        return _with_diag(err, runtime.info)
 
     # Stage 6: Collect Reply
     reply, err, _ = await runtime.collect_reply()
     if err:
-        return _full_error(err["code"], request_id=request_id)
+        return _with_diag(err, runtime.info)
 
     await runtime.close()
-    return _build_result(request_id, model_info, reply,
-                         expected_model=expected_model,
-                         expected_thinking=expected_thinking)
+    result = _build_result(request_id, model_info, reply,
+                           expected_model=expected_model,
+                           expected_thinking=expected_thinking)
+    return _with_diag(result, runtime.info)
 
 
 async def health() -> dict:
@@ -1004,6 +1058,17 @@ def _check_model_match(model_info: dict,
     if _state_matches(cur_name, cur_thinking, em, et):
         return None
     return {"code": "MODEL_MISMATCH"}
+
+
+def _with_diag(result: dict, runtime_info: dict) -> dict:
+    """Merge runtime diagnostics into result."""
+    if runtime_info:
+        result["diagnostics"] = {
+            "startup": runtime_info.get("startup"),
+            "page": runtime_info.get("page"),
+            "session": runtime_info.get("session"),
+        }
+    return result
 
 
 def _build_result(request_id: str, model_info: dict, reply: str = None,
