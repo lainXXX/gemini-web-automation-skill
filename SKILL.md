@@ -59,10 +59,12 @@ chat.py (CDP Consumer)
   │   ├── CDP 可用 → 连接
   │   └── 不可用 → CHROME_NOT_RUNNING
   │
-  ├── Stage 3: 页面
-  │   ├── Gemini Tab 存在 → 复用
-  │   ├── 有其他页面 → 导航到 Gemini
-  │   └── 无页面 → NO_PAGES
+  ├── Stage 3: 页面 + Session
+  │   ├── 有 session 文件 → 按精确 URL 找页面
+  │   ├── 找到 → 复用
+  │   ├── 未找到 → 导航已有页面到 session URL
+  │   ├── 无 session → 创建新标签页
+  │   └── 回复后 → 从 URL 捕获 session_id 持久化
   │
   └── Stage 4: 对话
       ├── 发送 Prompt
@@ -71,6 +73,8 @@ chat.py (CDP Consumer)
 ```
 
 Agent 始终处于 Stage 4 视角：调用 → 等待 → 得到结果。`bootstrap.py` 是 Chrome Daemon，负责启动 Chrome 和登录；`chat.py` 只消费 CDP。
+
+每个终端通过 `userdata/.runtime/session.json` 维护自己的会话 ID，互不干扰。
 
 ---
 
@@ -109,6 +113,8 @@ Agent 始终处于 Stage 4 视角：调用 → 等待 → 得到结果。`bootst
 | `--headed` | 保持浏览器窗口在前台（默认最小化到后台） |
 | `--dry-run` | 仅测试模型切换，不发送对话 |
 | `--health` | 健康检查（不执行对话，返回运行时状态） |
+| `--new` | 新建对话（清除 session 文件，开新标签页） |
+| `--reset` | 清除 session 文件，不执行对话 |
 
 ### 错误路由
 
@@ -158,9 +164,10 @@ Agent 始终处于 Stage 4 视角：调用 → 等待 → 得到结果。`bootst
 ## 核心原则
 
 1. **Runtime API First** — 所有日常任务统一通过 `scripts/chat.py` 完成，Agent 不直接操作浏览器
-2. **Runtime First** — 优先复用已有 Session，仅在必要时冷启动
-3. **Lifecycle 下沉** — Agent 不判断运行环境，所有状态管理由 Runtime 内部自动完成
-4. **Fail Fast** — 超时立即失败并返回结构化错误；异常时收集截图/HTML/URL，不重试
+2. **Session 隔离** — 每个终端通过 `userdata/.runtime/session.json` 维护自己的会话 ID，互不干扰
+3. **三路页面发现** — 精确 URL 匹配 → 无 session 创建新页 → 有 session 导航已有页
+4. **Lifecycle 下沉** — Agent 不判断运行环境，所有状态管理由 Runtime 内部自动完成
+5. **Fail Fast** — 超时立即失败并返回结构化错误；异常时收集截图/HTML/URL，不重试
 
 ## 窗口行为
 

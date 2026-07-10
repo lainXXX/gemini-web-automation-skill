@@ -18,19 +18,22 @@ CDP :9222 可用？
     ├── YES → connectOverCDP()
     │           │
     │           ▼
-    │     复用已有 Gemini Page？
-    │      ├── 有 Gemini 页 → 直接复用
-    │      ├── 有其他 Page → 导航到 Gemini
-    │      └── 没有 Page → NO_PAGES 错误
-    │           │
-    │           ▼
+    │     加载 session 文件 (userdata/.runtime/session.json)
+    │      ├── 有 session_url → 按精确 URL 找页面
+    │      │   ├── 找到 → 直接复用 (reused)
+    │      │   └── 未找到 → 导航已有页面到 session URL (navigated)
+    │      ├── 无 session → 创建新标签页 (created)
+    │      │
+    │      ▼
     │     classify() 判断页面状态
     │      ├── CHAT → 执行状态机
     │      ├── LOGIN → 引导登录
     │      ├── CAPTCHA → 暂停等待人工
     │      └── UNKNOWN → 收集证据 → abort
     │
-    └── NO → CHROME_NOT_RUNNING 错误（运行 bootstrap --daemon）
+    └── NO → CHROME_NOT_RUNNING（运行 bootstrap）
+
+对话完成后 → 从 page.url 捕获 session_id → 写入 session.json
 ```
 
 ## 模块职责（设计知识）
@@ -43,11 +46,13 @@ CDP :9222 可用？
 - Daemon 模式: bootstrap.py --daemon 在后台最小化启动 Chrome
 - Proxy: 从 .env 读取，支持 http/https/socks5
 
-### Session 复用
-- 优先复用当前 Page（URL 正确直接返回）
-- URL 不对时 goto 导航，不创建新 Page
-- 全部失效时 new_page
-- Session 断开时自动恢复
+### Session 管理
+- 每个终端维护自己的 `userdata/.runtime/session.json`，包含 `session_id` 和 `url`
+- 首次对话后从 `page.url` 自动捕获 session ID（`/app/<session_id>`）
+- 后续运行按精确 URL 匹配页面，不再评分遍历
+- 页面发现三路分支：精确匹配 → 无 session 时创建新页 → 有 session 时导航已有页
+- `--new` 清除 session 文件并创建新标签页
+- `--reset` 仅清除 session 文件
 
 ### Page 分类
 - 第一道防线：任何操作前先分类
