@@ -635,7 +635,27 @@ class ChatRuntime:
             if not ok:
                 return self._result_error("ATTACHMENT_FAILED")
 
-        if attachments:
+        # 统一 execCommand 插入文本（比 fill() 快一个数量级，无逐字输入竞态）
+        await self._page.evaluate("""(text) => {
+            const div = document.querySelector('div[contenteditable="true"][role="textbox"]');
+            if (!div) return; div.focus();
+            const s = window.getSelection(); const r = document.createRange();
+            r.selectNodeContents(div); r.collapse(false); s.removeAllRanges(); s.addRange(r);
+            document.execCommand('insertText', false, text);
+        }""", prompt)
+
+        # 回读校验：确认 Prompt 已完整写入再发送
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            inserted = await self._page.evaluate("""() => {
+                const e = document.querySelector('div[contenteditable="true"][role="textbox"]');
+                return e ? e.innerText : '';
+            }""")
+            if inserted.strip() == prompt.strip():
+                break
+            await asyncio.sleep(0.1)
+        else:
+            # 超时后重试一次
             await self._page.evaluate("""(text) => {
                 const div = document.querySelector('div[contenteditable="true"][role="textbox"]');
                 if (!div) return; div.focus();
@@ -643,8 +663,6 @@ class ChatRuntime:
                 r.selectNodeContents(div); r.collapse(false); s.removeAllRanges(); s.addRange(r);
                 document.execCommand('insertText', false, text);
             }""", prompt)
-        else:
-            await self._page.locator(INPUT_SEL).fill(prompt)
 
         self._initial_mr_count = await self._page.evaluate(
             "() => document.querySelectorAll('model-response').length")
