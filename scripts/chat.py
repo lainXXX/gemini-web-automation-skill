@@ -43,6 +43,26 @@ PROXY_SERVER = os.getenv("PROXY_SERVER")
 EXPECTED_MODEL = os.getenv("MODEL_NAME")
 EXPECTED_THINKING = os.getenv("THINKING_LEVEL")
 
+# ── Session ─────────────────────────────────────────────────────
+SESSION_DIR = Path(USER_DATA_DIR) / ".runtime"
+SESSION_FILE = SESSION_DIR / "session.json"
+
+def _load_session() -> dict | None:
+    if SESSION_FILE.exists():
+        try:
+            return json.loads(SESSION_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return None
+
+def _save_session(data: dict):
+    SESSION_DIR.mkdir(parents=True, exist_ok=True)
+    SESSION_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+def _clear_session():
+    if SESSION_FILE.exists():
+        SESSION_FILE.unlink()
+
 # ── Selectors ─────────────────────────────────────────────────
 INPUT_SEL = 'div[contenteditable="true"][role="textbox"]'
 SEND_SEL = 'button[aria-label="Send message"], button[aria-label="发送消息"]'
@@ -185,11 +205,12 @@ class ChatRuntime:
     STATE_LOGIN_REQUIRED = "LOGIN_REQUIRED"
     STATE_FAILED = "FAILED"
 
-    def __init__(self, headed: bool = False):
+    def __init__(self, headed: bool = False, session_url: str | None = None):
         self._p = None
         self._browser = None
         self._page = None
         self._headed = headed
+        self._session_url = session_url
         self._startup = "warm"
         self._state = self.STATE_IDLE
         self._browser_version = "unknown"
@@ -203,7 +224,7 @@ class ChatRuntime:
         return {
             "startup": self._startup,
             "browser": "reused",
-            "session": "reused",
+            "session": self._session_url or "new",
             "page": self._page_mode,
             "browser_version": self._browser_version,
             "runtime_state": self._state,
@@ -240,40 +261,36 @@ class ChatRuntime:
 
     # ── ensure_chat ──────────────────────────────────────────────
 
-    async def _find_gemini_page(self):
-        """Score-based page finder. Returns best matching Gemini page or None."""
-        candidates = []
+    async def _find_page_by_url(self, url: str) -> object | None:
+        """Find a page by exact URL match across all contexts."""
         for ctx in self._browser.contexts:
             for pg in ctx.pages:
-                url = pg.url
-                score = 0
-                if "gemini.google.com" in url:
-                    score += 50
-                try:
-                    if await pg.locator(INPUT_SEL).count() > 0:
-                        score += 30
-                    if await pg.locator(MODEL_SEL).count() > 0:
-                        score += 20
-                except Exception:
-                    pass
-                if score > 0:
-                    candidates.append((score, pg))
-        if candidates:
-            return max(candidates, key=lambda x: x[0])[1]
+                if pg.url == url:
+                    return pg
         return None
 
     async def ensure_chat(self) -> tuple[dict, dict | None]:
-        """Find Gemini page or navigate existing page to Gemini.
-        Never creates new pages/tabs — bootstrap.py manages Chrome lifecycle.
+        """Find Gemini page by session URL, or create new page to Gemini.
         Returns (page_state, error).  When error is None, self._page is usable.
         """
-        page = await self._find_gemini_page()
+        target = self._session_url or TARGET_URL
+        page = await self._find_page_by_url(target)
 
         if page:
             self._page = page
             self._page_mode = "reused"
+        elif not self._session_url:
+            # New conversation (no session) — create a fresh page
+            self._page = await self._browser.new_page()
+            self._page_mode = "created"
+            try:
+                await self._page.goto(target, timeout=60000,
+                                      wait_until="domcontentloaded")
+                await asyncio.sleep(3)
+            except Exception:
+                return {}, self._result_error("PAGE_NOT_FOUND")
         else:
-            # No Gemini page found — navigate first existing page to Gemini
+            # Have session URL but can't find exact page — navigate existing one
             existing = None
             for ctx in self._browser.contexts:
                 for pg in ctx.pages:
@@ -281,18 +298,16 @@ class ChatRuntime:
                     break
                 if existing:
                     break
-
             if existing:
                 self._page = existing
                 self._page_mode = "navigated"
                 try:
-                    await self._page.goto(TARGET_URL, timeout=60000,
+                    await self._page.goto(target, timeout=60000,
                                           wait_until="domcontentloaded")
                     await asyncio.sleep(3)
                 except Exception:
                     return {}, self._result_error("PAGE_NOT_FOUND")
             else:
-                # No pages at all — Chrome is running but has no tabs
                 return {}, self._result_error("NO_PAGES", "RUN_BOOTSTRAP")
 
         await self._page.bring_to_front()
@@ -316,7 +331,6 @@ class ChatRuntime:
             return ps, self._result_error("LOGIN_REQUIRED", "RUN_BOOTSTRAP")
 
         if ps["state"] == "UNKNOWN":
-            # 二次 reload 仍 UNKNOWN — 收集证据返回 UNKNOWN_PAGE
             return ps, self._result_error("UNKNOWN_PAGE", "RUN_BOOTSTRAP")
 
         self._state = self.STATE_READY
@@ -823,6 +837,17 @@ class ChatRuntime:
             reply = _get_reply(last)
         return reply, None, 0
 
+    # ── session ───────────────────────────────────────────────────
+
+    def capture_session(self) -> str | None:
+        """Read page URL after reply and save session ID if present."""
+        url = self._page.url if self._page else ""
+        if url.startswith(TARGET_URL + "/") and len(url) > len(TARGET_URL) + 1:
+            session_id = url[len(TARGET_URL) + 1:]
+            _save_session({"session_id": session_id, "url": url})
+            return session_id
+        return None
+
     # ── close ────────────────────────────────────────────────────
 
     async def close(self):
@@ -882,9 +907,16 @@ async def _check_network() -> dict | None:
 
 
 async def execute(prompt: str, attachments: list[str] | None = None,
-                  headed: bool = False, dry_run: bool = False) -> dict:
+                  headed: bool = False, dry_run: bool = False,
+                  new_chat: bool = False, reset: bool = False) -> dict:
     """Execute a Gemini conversation. Returns structured JSON."""
     request_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:4]
+
+    # Stage 0: Session management
+    if reset:
+        _clear_session()
+        return _base(request_id) | {"ok": True, "reply": None,
+                                     "session": "reset"}
 
     # Stage 1: Preflight
     err = _check_env()
@@ -895,8 +927,17 @@ async def execute(prompt: str, attachments: list[str] | None = None,
     err = await _check_network()
     if err: return err
 
+    # Load or create session
+    if new_chat:
+        _clear_session()
+        session_data = None
+    else:
+        session_data = _load_session()
+
+    session_url = session_data["url"] if session_data else None
+
     # Stage 2: Connect Runtime
-    runtime = ChatRuntime(headed=headed)
+    runtime = ChatRuntime(headed=headed, session_url=session_url)
     err = await runtime.connect()
     if err:
         return _with_diag(err, runtime.info)
@@ -934,6 +975,9 @@ async def execute(prompt: str, attachments: list[str] | None = None,
     reply, err, _ = await runtime.collect_reply()
     if err:
         return _with_diag(err, runtime.info)
+
+    # Capture session ID from URL after first conversation
+    runtime.capture_session()
 
     await runtime.close()
     result = _build_result(request_id, model_info, reply,
@@ -1133,16 +1177,23 @@ if __name__ == "__main__":
                         help="仅测试模型切换，不发送对话")
     parser.add_argument("--health", action="store_true",
                         help="健康检查（不执行对话）")
+    parser.add_argument("--new", action="store_true", dest="new_chat",
+                        help="新建对话（清除 session，打开新标签页）")
+    parser.add_argument("--reset", action="store_true",
+                        help="清除 session 文件，不执行对话")
     args = parser.parse_args()
 
     if args.health:
         result = asyncio.run(health())
+    elif args.reset:
+        result = asyncio.run(execute("", reset=True))
     elif args.prompt:
         result = asyncio.run(execute(
             " ".join(args.prompt),
             args.attachments or None,
             headed=args.headed,
             dry_run=args.dry_run,
+            new_chat=args.new_chat,
         ))
     else:
         parser.print_help()
