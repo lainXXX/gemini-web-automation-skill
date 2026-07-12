@@ -34,8 +34,13 @@ CAPABILITY = {
 TARGET_URL = os.getenv("TARGET_URL", "https://gemini.google.com/app")
 _RAW_PORT = os.getenv("REMOTE_DEBUGGING_PORT", "")
 CDP_PORT = int(_RAW_PORT) if _RAW_PORT.isdigit() else 9222
+_DEFAULT_CHROME = {
+    "win32":  r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    "darwin": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "linux":  "/usr/bin/google-chrome",
+}
 CHROME_PATH = os.getenv("CHROME_PATH",
-    r"C:\Program Files\Google\Chrome\Application\chrome.exe")
+    _DEFAULT_CHROME.get(sys.platform, "google-chrome"))
 _raw_udir = os.getenv("USER_DATA_DIR", "")
 USER_DATA_DIR = str((Path(__file__).resolve().parent.parent / _raw_udir).resolve()) if _raw_udir else \
     str(Path(__file__).resolve().parent.parent / "userdata")
@@ -100,6 +105,7 @@ ERROR_MESSAGES = {
     "INPUT_NOT_FOUND":     "输入框未就绪 (10s 超时)",
     "STREAM_TIMEOUT":      "AI 回复超时",
     "ATTACHMENT_FAILED":   "附件上传失败",
+    "TOO_MANY_IMAGES":     "图片最多 10 张",
     "NETWORK_ERROR":       "网络异常，请检查网络连接",
     "ENV_NOT_FOUND":       ".env 不存在，请复制 .env.example 并配置",
     "INVALID_ENV":         ".env 配置有误，请检查",
@@ -645,7 +651,10 @@ class ChatRuntime:
         await asyncio.sleep(0.3)
 
         if attachments:
-            ok = await self._upload_images(attachments)
+            existing = [p for p in attachments if os.path.isfile(p)]
+            if len(existing) > 10:
+                return self._result_error("TOO_MANY_IMAGES")
+            ok = await self._upload_images(existing)
             if not ok:
                 return self._result_error("ATTACHMENT_FAILED")
 
@@ -693,7 +702,8 @@ class ChatRuntime:
         return None
 
     async def _upload_images(self, paths: list[str]) -> bool:
-        """Upload images via best available strategy. Returns True on success."""
+        """Upload images via best available strategy. Returns True on success.
+        Caller must cap at 10 images."""
         existing = [p for p in paths if os.path.isfile(p)]
         if not existing:
             return False
