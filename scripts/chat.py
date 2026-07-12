@@ -10,7 +10,7 @@ Agent 仅根据 ok、contract、reply、error.code、next_action 决定下一步
     python scripts/chat.py --health
 """
 
-import os, sys, json, base64, asyncio, argparse, time, socket, uuid
+import os, sys, json, base64, asyncio, argparse, time, socket, uuid, re
 from pathlib import Path
 from urllib.parse import urlparse
 from dotenv import load_dotenv
@@ -49,24 +49,34 @@ EXPECTED_MODEL = os.getenv("MODEL_NAME")
 EXPECTED_THINKING = os.getenv("THINKING_LEVEL")
 
 # ── Session ─────────────────────────────────────────────────────
-SESSION_DIR = Path(USER_DATA_DIR) / ".runtime"
-SESSION_FILE = SESSION_DIR / "session.json"
+SESSION_DIR = Path(USER_DATA_DIR) / ".runtime" / "sessions"
 
-def _load_session() -> dict | None:
-    if SESSION_FILE.exists():
+def _session_file(key: str) -> Path:
+    return SESSION_DIR / f"{key}.json"
+
+def _load_session(key: str) -> dict | None:
+    fp = _session_file(key)
+    if fp.exists():
         try:
-            return json.loads(SESSION_FILE.read_text(encoding="utf-8"))
+            return json.loads(fp.read_text(encoding="utf-8"))
         except Exception:
             pass
     return None
 
-def _save_session(data: dict):
+def _save_session(data: dict, key: str):
     SESSION_DIR.mkdir(parents=True, exist_ok=True)
-    SESSION_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    _session_file(key).write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
-def _clear_session():
-    if SESSION_FILE.exists():
-        SESSION_FILE.unlink()
+def _clear_session(key: str):
+    fp = _session_file(key)
+    if fp.exists():
+        fp.unlink()
+
+def _resolve_session_key(cli_key: str | None) -> str:
+    if cli_key:
+        return cli_key
+    cwd = Path.cwd().resolve().as_posix()
+    return re.sub(r"[^A-Za-z0-9._-]", "_", cwd)
 
 # ── Selectors ─────────────────────────────────────────────────
 INPUT_SEL = 'div[contenteditable="true"][role="textbox"]'
@@ -849,12 +859,12 @@ class ChatRuntime:
 
     # ── session ───────────────────────────────────────────────────
 
-    def capture_session(self) -> str | None:
+    def capture_session(self, key: str = "default") -> str | None:
         """Read page URL after reply and save session ID if present."""
         url = self._page.url if self._page else ""
         if url.startswith(TARGET_URL + "/") and len(url) > len(TARGET_URL) + 1:
             session_id = url[len(TARGET_URL) + 1:]
-            _save_session({"session_id": session_id, "url": url})
+            _save_session({"session_id": session_id, "url": url}, key)
             return session_id
         return None
 
@@ -918,13 +928,15 @@ async def _check_network() -> dict | None:
 
 async def execute(prompt: str, attachments: list[str] | None = None,
                   headed: bool = False, dry_run: bool = False,
-                  new_chat: bool = False, reset: bool = False) -> dict:
+                  new_chat: bool = False, reset: bool = False,
+                  session_key: str | None = None) -> dict:
     """Execute a Gemini conversation. Returns structured JSON."""
     request_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:4]
+    session_key = _resolve_session_key(session_key)
 
     # Stage 0: Session management
     if reset:
-        _clear_session()
+        _clear_session(session_key)
         return _base(request_id) | {"ok": True, "reply": None,
                                      "session": "reset"}
 
@@ -939,10 +951,10 @@ async def execute(prompt: str, attachments: list[str] | None = None,
 
     # Load or create session
     if new_chat:
-        _clear_session()
+        _clear_session(session_key)
         session_data = None
     else:
-        session_data = _load_session()
+        session_data = _load_session(session_key)
 
     session_url = session_data["url"] if session_data else None
 
@@ -987,7 +999,7 @@ async def execute(prompt: str, attachments: list[str] | None = None,
         return _with_diag(err, runtime.info)
 
     # Capture session ID from URL after first conversation
-    runtime.capture_session()
+    runtime.capture_session(key=session_key)
 
     await runtime.close()
     result = _build_result(request_id, model_info, reply,
@@ -1191,12 +1203,15 @@ if __name__ == "__main__":
                         help="新建对话（清除 session，打开新标签页）")
     parser.add_argument("--reset", action="store_true",
                         help="清除 session 文件，不执行对话")
+    parser.add_argument("--session", default=None,
+                        help="会话标识，用于隔离不同场景的会话（默认: 按工作目录自动派生）")
     args = parser.parse_args()
+    session_key = _resolve_session_key(args.session)
 
     if args.health:
         result = asyncio.run(health())
     elif args.reset:
-        result = asyncio.run(execute("", reset=True))
+        result = asyncio.run(execute("", reset=True, session_key=session_key))
     elif args.prompt:
         result = asyncio.run(execute(
             " ".join(args.prompt),
@@ -1204,6 +1219,7 @@ if __name__ == "__main__":
             headed=args.headed,
             dry_run=args.dry_run,
             new_chat=args.new_chat,
+            session_key=session_key,
         ))
     else:
         parser.print_help()

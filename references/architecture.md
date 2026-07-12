@@ -47,12 +47,15 @@ CDP :9222 可用？
 - Proxy: 从 .env 读取，支持 http/https/socks5
 
 ### Session 管理
-- 每个终端维护自己的 `userdata/.runtime/session.json`，包含 `session_id` 和 `url`
+- 按**会话标识**隔离，每个标识对应一个独立的 Gemini 对话
+- 文件存储：`userdata/.runtime/sessions/{key}.json`，包含 `session_id` 和 `url`
+- Key 来源：`--session NAME` 或 cwd 的 POSIX 路径（未传 `--session` 时，非字母数字字符替换为 `_`）
+- 调用方自由决定隔离粒度：一个项目一个 key、一个 Agent 一个 key，或多个调用共享同一个 key
 - 首次对话后从 `page.url` 自动捕获 session ID（`/app/<session_id>`）
 - 后续运行按精确 URL 匹配页面，不再评分遍历
 - 页面发现三路分支：精确匹配 → 无 session 时创建新页 → 有 session 时导航已有页
-- `--new` 清除 session 文件并创建新标签页
-- `--reset` 仅清除 session 文件
+- `--new` 清除指定 key 的 session 文件并创建新标签页
+- `--reset` 仅清除指定 key 的 session 文件
 
 ### Page 分类
 - 第一道防线：任何操作前先分类

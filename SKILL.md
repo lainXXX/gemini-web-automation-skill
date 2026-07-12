@@ -74,7 +74,7 @@ chat.py (CDP Consumer)
 
 Agent 始终处于 Stage 4 视角：调用 → 等待 → 得到结果。`bootstrap.py` 是 Chrome Daemon，负责启动 Chrome 和登录；`chat.py` 只消费 CDP。
 
-每个终端通过 `userdata/.runtime/session.json` 维护自己的会话 ID，互不干扰。
+每个会话标识（`--session NAME`）通过 `userdata/.runtime/sessions/{NAME}.json` 维护独立的 Gemini 对话，互不干扰。默认 key 为 `default`。
 
 ---
 
@@ -113,8 +113,9 @@ Agent 始终处于 Stage 4 视角：调用 → 等待 → 得到结果。`bootst
 | `--headed` | 保持浏览器窗口在前台（默认最小化到后台） | 调试或观察浏览器行为 |
 | `--dry-run` | 仅测试模型切换，不发送对话 | 调试 |
 | `--health` | 健康检查（不执行对话，返回运行时状态） | 检查 Chrome/Runtime 状态 |
-| `--new` | 新建对话（清除 session 文件，开新标签页） | 仅用户明确要求"新建/新对话"时使用，日常对话不要加 |
+| `--new` | 新建对话（清除 session，开新标签页） | 仅用户明确要求"新建/新对话"时使用，日常对话不要加 |
 | `--reset` | 清除 session 文件，不执行对话 | 仅用户明确要求重置时使用 |
+| `--session NAME` | 会话标识，用于隔离不同场景（默认: 按工作目录自动派生） | 需自定义/覆盖自动隔离时使用；不加则按 cwd 自动隔离 |
 
 ### 错误路由
 
