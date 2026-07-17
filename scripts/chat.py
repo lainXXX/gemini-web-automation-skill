@@ -278,53 +278,55 @@ class ChatRuntime:
     # ── ensure_chat ──────────────────────────────────────────────
 
     async def _find_page_by_url(self, url: str) -> object | None:
-        """Find a page by exact URL match across all contexts."""
+        normalized = url.rstrip('/')
         for ctx in self._browser.contexts:
             for pg in ctx.pages:
-                if pg.url == url:
+                if pg.url.rstrip('/') == normalized:
                     return pg
         return None
 
     async def ensure_chat(self) -> tuple[dict, dict | None]:
-        """Find Gemini page by session URL, or create new page to Gemini.
-        Returns (page_state, error).  When error is None, self._page is usable.
-        """
-        target = self._session_url or TARGET_URL
-        page = await self._find_page_by_url(target)
+        """Open a tab to Gemini.
 
-        if page:
-            self._page = page
-            self._page_mode = "reused"
-        elif not self._session_url:
-            # New conversation (no session) — create a fresh page
-            self._page = await self._browser.new_page()
-            self._page_mode = "created"
-            try:
-                await self._page.goto(target, timeout=60000,
-                                      wait_until="domcontentloaded")
-                await asyncio.sleep(3)
-            except Exception:
-                return {}, self._result_error("PAGE_NOT_FOUND")
-        else:
-            # Have session URL but can't find exact page — navigate existing one
-            existing = None
-            for ctx in self._browser.contexts:
-                for pg in ctx.pages:
-                    existing = pg
-                    break
-                if existing:
-                    break
+        - Has session:     find bootstrap page at TARGET_URL → reuse + goto(session_url).
+                           No bootstrap page → new tab + goto(session_url).
+        - No session:      find bootstrap page at TARGET_URL → reuse.
+                           No bootstrap page → new tab + goto(TARGET_URL).
+        """
+        ctx = self._browser.contexts[0]
+
+        if self._session_url:
+            existing = await self._find_page_by_url(self._session_url)
             if existing:
                 self._page = existing
-                self._page_mode = "navigated"
-                try:
-                    await self._page.goto(target, timeout=60000,
-                                          wait_until="domcontentloaded")
-                    await asyncio.sleep(3)
-                except Exception:
-                    return {}, self._result_error("PAGE_NOT_FOUND")
-            else:
-                return {}, self._result_error("NO_PAGES", "RUN_BOOTSTRAP")
+                self._page_mode = "reused"
+                ps = await self._classify()
+                if ps["state"] == "CHAT" and not self._headed:
+                    await self._background_window()
+                return ps, None
+            existing = await self._find_page_by_url(TARGET_URL)
+            self._page = existing or await ctx.new_page()
+            self._page_mode = "reused" if existing else "created"
+            target = self._session_url
+        else:
+            existing = await self._find_page_by_url(TARGET_URL)
+            if existing:
+                self._page = existing
+                self._page_mode = "reused"
+                ps = await self._classify()
+                if ps["state"] == "CHAT" and not self._headed:
+                    await self._background_window()
+                return ps, None
+            self._page = await ctx.new_page()
+            self._page_mode = "created"
+            target = TARGET_URL
+
+        try:
+            await self._page.goto(target, timeout=60000,
+                                  wait_until="domcontentloaded")
+            await asyncio.sleep(3)
+        except Exception:
+            return {}, self._result_error("PAGE_NOT_FOUND")
 
         await self._page.bring_to_front()
         ps = await self._classify()

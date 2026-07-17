@@ -91,6 +91,10 @@ Agent (Claude Code / Codex ...)
                  └─ Agent 拿到结果继续工作
 ```
 
+## 另见
+
+[GPT Web Chat Skill](https://github.com/mileist/gpt-web-chat-skill) — 同样的浏览器自动化架构，目标 chatgpt.com。
+
 ## 配置
 
 | 变量 | 默认值 | 说明 |
